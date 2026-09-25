@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//etc/nginx/sites-enabled/**)",
+      "Bash(timeout 25 node -e ' *)",
+      "Bash(echo *)",
+      "Bash(curl -s -o /tmp/art.js -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:5173/src/pages/ArticlesPage.jsx\")",
+      "Read(//tmp/**)",
+      "Bash(timeout 20 node -e ' *)",
+      "Bash(curl -s -o /tmp/thr.js -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:5173/src/pages/ThreadPage.jsx\")",
+      "Bash(timeout 30 node -e ' *)",
+      "Bash(cd *)",
+      "Bash(curl -s -o /tmp/sch.js -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:5173/src/pages/SchedulePage.jsx\")",
+      "Bash(curl -s -o /tmp/el.js -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:5173/src/pages/ElearningPage.jsx\")",
+      "Bash(grep -n '^/\\\\* -\\\\{5,\\\\}' styles.css)"
+    ]
+  }
+}

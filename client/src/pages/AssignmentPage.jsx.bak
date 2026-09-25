@@ -1,0 +1,571 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams, useParams } from 'react-router-dom';
+import { api } from '../api.js';
+import { useAuth } from '../auth.jsx';
+import { Icon } from '../components/Icons.jsx';
+import {
+  Avatar,
+  EmptyState,
+  Hero,
+  Loading,
+  Notice,
+  Panel,
+  Split,
+  formatDate,
+  formatDateTime,
+} from '../components/ui.jsx';
+
+function FeedbackThread({ messages, emptyHint }) {
+  if (!messages.length) return <p className="muted">{emptyHint}</p>;
+
+  return (
+    <div className="feedback-thread">
+      {messages.map((message) => (
+        <div
+          className={`feedback-message feedback-message--${message.authorRole}`}
+          key={message.id}
+        >
+          <p className="feedback-message__meta">
+            <span className="feedback-message__author">{message.author.name}</span>
+            <span className="badge badge--neutral">{message.authorRole}</span>
+            {!message.readAt ? <span className="badge badge--warn">new</span> : null}
+            <span className="meta">{formatDateTime(message.createdAt)}</span>
+          </p>
+          <p className="feedback-message__body">{message.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function AssignmentPage() {
+  const { assignmentId } = useParams();
+  const { user } = useAuth();
+  const isAdmin = user.role === 'admin';
+
+  const [assignment, setAssignment] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [answerFiles, setAnswerFiles] = useState({});
+  const [existingMedia, setExistingMedia] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [current, setCurrent] = useState(0);
+
+  const [submissions, setSubmissions] = useState(null);
+  const [submissionsLoading, setSubmissionsLoading] = useState(false);
+
+  const [feedback, setFeedback] = useState([]);
+  const [feedbackDraft, setFeedbackDraft] = useState('');
+  const [feedbackSending, setFeedbackSending] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
+  const [replyDrafts, setReplyDrafts] = useState({});
+
+  const [searchParams] = useSearchParams();
+  const editing = searchParams.get('edit') === 'true';
+  const [form, setForm] = useState({ title: '', description: '', dueDate: '', questions: [] });
+  const [questionFiles, setQuestionFiles] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (editing && assignment && questions.length) {
+      setForm({
+        title: assignment.title,
+        description: assignment.description,
+        dueDate: assignment.dueDate ? assignment.dueDate.slice(0, 10) : '',
+        questions: questions.map((q) => ({
+          prompt: q.prompt,
+          type: q.type,
+          options: q.options ?? [],
+          correctAnswer: q.correctAnswer ?? '',
+          points: q.points,
+        })),
+      });
+      setQuestionFiles({});
+    }
+  }, [editing, assignment, questions]);
+
+  function updateQuestion(index, patch) {
+    setForm((current) => ({
+      ...current,
+      questions: current.questions.map((q, i) => (i === index ? { ...q, ...patch } : q)),
+    }));
+  }
+
+  function updateOption(questionIndex, optionIndex, value) {
+    setForm((current) => ({
+      ...current,
+      questions: current.questions.map((q, i) => {
+        if (i !== questionIndex) return q;
+        const options = q.options.map((opt, j) => (j === optionIndex ? value : opt));
+        const correctAnswer = options.includes(q.correctAnswer) ? q.correctAnswer : '';
+        return { ...q, options, correctAnswer };
+      }),
+    }));
+  }
+
+  function addQuestionFile(questionIndex, fileList) {
+    const file = fileList?.[0] ?? null;
+    if (file) setQuestionFiles((prev) => ({ ...prev, [questionIndex]: file }));
+  }
+
+  function removeQuestionFile(questionIndex) {
+    setQuestionFiles((prev) => {
+      const copy = { ...prev };
+      delete copy[questionIndex];
+      return copy;
+    });
+  }
+
+  async function handleUpdate(event) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      const formData = new FormData();
+      formData.append('title', form.title);
+      formData.append('description', form.description);
+      formData.append('dueDate', form.dueDate || '');
+      formData.append('questions', JSON.stringify(form.questions));
+      Object.entries(questionFiles).forEach(([index, file]) => {
+        formData.append(`question_${index}_image`, file);
+      });
+      await api.put(`/elearning/assignments/${assignmentId}`, formData);
+      window.location.href = `/e-learning/${assignmentId}`;
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.get(`/elearning/assignments/${assignmentId}`);
+      setAssignment(data.assignment);
+      setQuestions(data.questions);
+      setAnswers(
+        Object.fromEntries(data.questions.map((question) => [question.id, question.answer ?? '']))
+      );
+      setExistingMedia(
+        Object.fromEntries(
+          data.questions
+            .filter((question) => question.mediaUrls?.length)
+            .map((question) => [question.id, question.mediaUrls])
+        )
+      );
+      setFeedback(data.feedback ?? []);
+      setAnswerFiles({});
+      setError('');
+    } catch (loadError) {
+      setError(loadError.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [assignmentId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const sheet = useMemo(() => {
+    const answered = questions.filter(
+      (question) =>
+        String(answers[question.id] ?? '').trim() !== '' ||
+        (existingMedia[question.id]?.length ?? 0) > 0 ||
+        (answerFiles[question.id]?.length ?? 0) > 0
+    ).length;
+    const totalPoints = questions.reduce((sum, question) => sum + question.points, 0);
+    const earned = questions.reduce(
+      (sum, question) => sum + (question.isCorrect === true ? question.points : 0),
+      0
+    );
+    const choiceCount = questions.filter((question) => question.type === 'multiple_choice').length;
+    const correctChoiceCount = questions.filter((question) => question.isCorrect === true).length;
+
+    return {
+      answered,
+      total: questions.length,
+      completion: questions.length ? Math.round((answered / questions.length) * 100) : 0,
+      points: earned,
+      totalPoints,
+      choices: choiceCount,
+      correctChoices: correctChoiceCount,
+    };
+  }, [questions, answers, existingMedia, answerFiles]);
+
+  const heroStats = isAdmin
+    ? [
+        { label: 'questions', value: sheet.total },
+        { label: 'multiple choice', value: sheet.choices },
+        { label: 'correct', value: sheet.correctChoices },
+      ]
+    : [
+        { label: 'progress', value: `${sheet.answered}/${sheet.total}` },
+        { label: 'completion', value: `${sheet.completion}%` },
+        { label: 'score', value: `${sheet.points}/${sheet.totalPoints}` },
+      ];
+
+  const unreadFromAdmin = useMemo(() => {
+    if (isAdmin) return 0;
+    return feedback.filter((m) => m.authorRole === 'admin' && !m.readAt).length;
+  }, [feedback, isAdmin]);
+
+  function answerQuestion(questionId, answer, questionIndex) {
+    setAnswers((prev) => ({ ...prev, [questionId]: answer }));
+    setExistingMedia((prev) => ({ ...prev, [questionId]: [] }));
+    setAnswerFiles((prev) => ({ ...prev, [questionId]: [] }));
+    if (questionIndex !== current) setCurrent(questionIndex);
+  }
+
+  function jumpToQuestion(index, questionId) {
+    if (index !== current) setCurrent(index);
+    if (questionId) {
+      document.getElementById(`question-${questionId}`)?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      const answersPayload = questions.map((question) => ({
+        questionId: question.id,
+        answer: answers[question.id] ?? null,
+      }));
+      formData.append('answers', JSON.stringify(answersPayload));
+
+      Object.entries(answerFiles).forEach(([questionId, entries]) => {
+        entries.forEach((entry, fileIndex) => {
+          formData.append(`answer_${questionId}_image_${fileIndex}`, entry.file);
+        });
+      });
+
+      const data = await api.upload(`/elearning/assignments/${assignmentId}/submit`, formData);
+      setResult(data);
+      Object.values(answerFiles)
+        .flat()
+        .forEach((entry) => entry.preview && URL.revokeObjectURL(entry.preview));
+      setAnswerFiles({});
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function sendFeedback({ body, staffId }) {
+    const res = await api.post(`/elearning/assignments/${assignmentId}/feedback`, {
+      body,
+      staffId,
+      role: isAdmin ? 'admin' : 'staff',
+    });
+    return res;
+  }
+
+  async function handleSendFeedback(event) {
+    event.preventDefault();
+    const body = feedbackDraft.trim();
+    if (!body) return;
+    setFeedbackSending(true);
+    setFeedbackError('');
+    try {
+      const data = await sendFeedback({ body });
+      setFeedback((prev) => [...prev, data.feedback]);
+      setFeedbackDraft('');
+    } catch (sendError) {
+      setFeedbackError(sendError.message);
+    } finally {
+      setFeedbackSending(false);
+    }
+  }
+
+  async function handleSendReply(event, staffId) {
+    event.preventDefault();
+    const body = (replyDrafts[staffId] ?? '').trim();
+    if (!body) return;
+    try {
+      const data = await sendFeedback({ body, staffId });
+      setSubmissions((current) =>
+        current.map((submission) =>
+          submission.user.id === staffId ? { ...submission, feedback: data.feedback } : submission
+        )
+      );
+      setReplyDrafts((current) => ({ ...current, [staffId]: '' }));
+    } catch (sendError) {
+      setError(sendError.message);
+    }
+  }
+
+  function addAnswerFile(questionId, fileList) {
+    const incoming = Array.from(fileList ?? []).map((file) => ({
+      file,
+      preview: URL.createObjectURL(file),
+    }));
+    if (!incoming.length) return;
+    setAnswerFiles((previous) => {
+      const existing = previous[questionId] ?? [];
+      return { ...previous, [questionId]: [...existing, ...incoming] };
+    });
+  }
+
+  function removeAnswerFile(questionId, index) {
+    setAnswerFiles((previous) => {
+      const list = previous[questionId] ?? [];
+      const removed = list[index];
+      if (removed?.preview) URL.revokeObjectURL(removed.preview);
+      return { ...previous, [questionId]: list.filter((_, position) => position !== index) };
+    });
+  }
+
+  const [submissionsData, setSubmissionsData] = useState([]);
+  const loadSubmissions = useCallback(async () => {
+    if (!isAdmin) return;
+    setSubmissionsLoading(true);
+    try {
+      const data = await api.get(`/elearning/assignments/${assignmentId}/submissions`);
+      setSubmissionsData(data.submissions ?? []);
+    } catch {
+      setSubmissionsData([]);
+    } finally {
+      setSubmissionsLoading(false);
+    }
+  }, [isAdmin, assignmentId]);
+
+  useEffect(() => {
+    if (isAdmin) loadSubmissions();
+  }, [isAdmin, loadSubmissions]);
+
+  async function handleMarkRead() {
+    if (!isAdmin) return;
+    try {
+      await api.post(`/elearning/assignments/${assignmentId}/feedback/mark-read`);
+      setSubmissionsData((prev) =>
+        prev.map((m) => ({ ...m, unreadFeedback: 0, feedback: m.feedback.map((f) => ({ ...f, readAt: new Date().toISOString() })) }))
+      );
+    } catch {}
+  }
+
+  useEffect(() => {
+    if (isAdmin && submissionData.length) handleMarkRead();
+  }, [isAdmin, submissionsData.length]);
+
+  const submissionData = useMemo(() => {
+    if (!assignment) return [];
+    const subs = submissionsData.filter((s) => s.assignmentId === assignment.id);
+    subs.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+    return subs;
+  }, [assignment, submissionsData]);
+
+  const allFeedback = useMemo(() => {
+    if (isAdmin) return submissionsData.flatMap((s) => s.feedback ?? []);
+    return feedback;
+  }, [isAdmin, submissionsData, feedback]);
+
+  return (
+    <>
+      <Notice tone="error">{error}</Notice>
+      <Notice tone="success">
+        {result ? `Submitted — ${result.correct} auto-graded correct, ${result.score} points earned.` : ''}
+      </Notice>
+
+      {loading ? (
+        <Loading label="Loading assignment" />
+      ) : !assignment ? (
+        <EmptyState icon="book" title="Assignment unavailable" />
+      ) : (
+        <>
+          {editing && isAdmin ? (
+            <form onSubmit={handleUpdate}>
+              <Panel
+                title="Edit assignment"
+                subtitle="Update title, description, due date, and questions."
+              >
+                <div className="form-grid">
+                  <label className="field">
+                    <span className="field__label">Title</span>
+                    <input
+                      className="input"
+                      value={form.title}
+                      onChange={(event) => setForm({ ...form, title: event.target.value })}
+                      required
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span className="field__label">Due date</span>
+                    <input
+                      className="input"
+                      type="date"
+                      value={form.dueDate}
+                      onChange={(event) => setForm({ ...form, dueDate: event.target.value })}
+                    />
+                  </label>
+
+                  <label className="field field--wide">
+                    <span className="field__label">Description</span>
+                    <textarea
+                      className="textarea"
+                      value={form.description}
+                      onChange={(event) => setForm({ ...form, description: event.target.value })}
+                      rows={3}
+                    />
+                  </label>
+                </div>
+
+                <SectionHead eyebrow="Questions" title="Question set" />
+
+                {form.questions.map((q, index) => (
+                  <Panel
+                    key={index}
+                    title={`Question ${index + 1}`}
+                    actions={
+                      <button
+                        type="button"
+                        className="icon-button"
+                        onClick={() => removeQuestionFile(index)}
+                        title="Remove image"
+                      >
+                        <Icon name="trash" size={15} />
+                      </button>
+                    }
+                  >
+                    <div className="form-grid">
+                      <label className="field field--wide">
+                        <span className="field__label">Prompt</span>
+                        <textarea
+                          className="textarea"
+                          value={q.prompt}
+                          onChange={(event) => updateQuestion(index, { prompt: event.target.value })}
+                          rows={3}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span className="field__label">Type</span>
+                        <select
+                          className="select"
+                          value={q.type}
+                          onChange={(event) =>
+                            updateQuestion(index, {
+                              type: event.target.value,
+                              correctAnswer: '',
+                              options: event.target.value === 'multiple_choice' ? ['', ''] : [],
+                            })
+                          }
+                        >
+                          <option value="multiple_choice">Multiple choice</option>
+                          <option value="essay">Essay</option>
+                        </select>
+                      </label>
+
+                      <label className="field">
+                        <span className="field__label">Points</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={1}
+                          value={q.points}
+                          onChange={(event) => updateQuestion(index, { points: Number(event.target.value) })}
+                        />
+                      </label>
+                    </div>
+
+                    {q.type === 'multiple_choice' && (
+                      <div style={{ marginTop: 12 }}>
+                        <p className="field__label">Options</p>
+                        {q.options.map((opt, optIndex) => (
+                          <div
+                            key={optIndex}
+                            className="row"
+                            style={{ gap: 8, marginTop: 8 }}
+                          >
+                            <input
+                              className="input"
+                              placeholder={`Option ${optIndex + 1}`}
+                              value={opt}
+                              onChange={(event) =>
+                                updateOption(index, optIndex, event.target.value)
+                              }
+                            />
+                            <input
+                              type="radio"
+                              name={`correct-${index}`}
+                              checked={q.correctAnswer === opt}
+                              onChange={() => updateQuestion(index, { correctAnswer: opt })}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <label className="field" style={{ marginTop: 12 }}>
+                      <span className="field__label">Attach photo</span>
+                      <label className="file-input">
+                        <Icon name="upload" size={18} />
+                        <span className="file-input__name">
+                          {questionFiles[index]?.name ?? 'Choose a file'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(event) => addQuestionFile(index, event.target.files)}
+                        />
+                      </label>
+                    </label>
+                  </Panel>
+                ))}
+
+                <div className="row" style={{ gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() =>
+                      setForm((current) => ({
+                        ...current,
+                        questions: [
+                          ...current.questions,
+                          { prompt: '', type: 'multiple_choice', options: ['', ''], correctAnswer: '', points: 10 },
+                        ],
+                      }))
+                    }
+                  >
+                    <Icon name="plus" size={16} />
+                    Add question
+                  </button>
+                </div>
+
+                <div className="row" style={{ gap: 8, marginTop: 12 }}>
+                  <button
+                    type="submit"
+                    className="btn btn--primary"
+                    disabled={saving}
+                  >
+                    {saving ? 'Saving…' : 'Save changes'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--outline"
+                    onClick={() => (window.location.href = `/e-learning/${assignmentId}`)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </Panel>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Panel>
+            )}
+          </Split>
+          )}
+        </>
+      )}
+    </>
+  );
+}

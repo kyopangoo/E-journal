@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "skills": {
+    "auto-skill-css-design-overhaul": {
+      "skillName": "css-design-overhaul",
+      "firstSeenAt": "2026-09-16T18:15:48.157Z",
+      "lastActivityAt": "2026-09-22T10:49:29.196Z",
+      "useCount": 2,
+      "state": "active",
+      "pinned": false,
+      "lastUsedAt": "2026-09-22T10:49:29.196Z"
+    }
+  }
+}

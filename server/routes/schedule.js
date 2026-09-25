@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { HttpError, requireText, wrap } from '../lib/http.js';
 import { clientIp, recordActivity } from '../lib/activity.js';
+import { notifyTeam } from '../lib/notify.js';
 import { requireAuth } from '../middleware/auth.js';
 import { schemaQuery } from '../schema.js';
 
@@ -42,6 +43,15 @@ function mapEvent(row, owner) {
 
 const EVENT_COLUMNS =
   'id, title, description, start_at AS startAt, end_at AS endAt, all_day, color';
+
+// The GET route fans out across members and so has a raw `users` row in hand (full_name),
+// while the single-event routes only have req.user, which loadPublicUser() already aliased to
+// fullName. mapEvent() wants one shape, so both are reduced to it here — without this the
+// create and edit responses threw on `owner.id` and answered 500 *after* the write had
+// already committed, which is why the row saved but the screen reported a failure.
+function ownerFrom(user) {
+  return { id: user.id, full_name: user.fullName ?? user.full_name, username: user.username };
+}
 
 async function findEvent(userId, id) {
   const rows = await schemaQuery(
@@ -118,7 +128,19 @@ router.post(
 
     await recordActivity(req.user.id, 'SCHEDULE_CREATED', `Added "${title}" on ${startAt.slice(0, 10)}`, clientIp(req));
 
-    res.status(201).json({ event: mapEvent(await findEvent(req.user.id, result.insertId)) });
+    // The whole team can see everybody's schedule, so a new entry is worth telling them about.
+    await notifyTeam(req.user.id, {
+      type: 'schedule.created',
+      entityType: 'schedule_event',
+      entityId: result.insertId,
+      title: `${req.user.fullName} added a new schedule`,
+      body: `${title} · ${startAt.slice(0, 16)}`,
+      link: '/schedule',
+    });
+
+    res.status(201).json({
+      event: mapEvent(await findEvent(req.user.id, result.insertId), ownerFrom(req.user)),
+    });
   })
 );
 
@@ -169,7 +191,21 @@ router.patch(
       params
     );
 
-    res.json({ event: mapEvent(await findEvent(req.user.id, id)) });
+    const event = mapEvent(await findEvent(req.user.id, id), ownerFrom(req.user));
+
+    // No recordActivity() on this path — an edit was never part of the activity trail. The
+    // notification is here because a moved schedule is exactly the kind of change a teammate
+    // needs to hear about.
+    await notifyTeam(req.user.id, {
+      type: 'schedule.updated',
+      entityType: 'schedule_event',
+      entityId: id,
+      title: `${req.user.fullName} updated a schedule`,
+      body: `${event.title} · ${String(event.startAt).slice(0, 16)}`,
+      link: '/schedule',
+    });
+
+    res.json({ event });
   })
 );
 
@@ -182,6 +218,15 @@ router.delete(
 
     await schemaQuery(req.user.id, 'DELETE FROM schedule_events WHERE id = ?', [id]);
     await recordActivity(req.user.id, 'SCHEDULE_DELETED', `Removed "${existing.title}"`, clientIp(req));
+
+    await notifyTeam(req.user.id, {
+      type: 'schedule.deleted',
+      entityType: 'schedule_event',
+      entityId: id,
+      title: `${req.user.fullName} removed a schedule`,
+      body: existing.title,
+      link: '/schedule',
+    });
 
     res.json({ ok: true });
   })

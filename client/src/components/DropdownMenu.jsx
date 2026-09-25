@@ -35,7 +35,10 @@ export function DropdownMenu({ trigger, children, placement = 'bottom-end' }) {
             ...(placement === 'bottom-end' && { right: 0 }),
           }}
         >
-          {children}
+          {/* A function child receives a way to close the menu — needed when an item inside
+              navigates, since the menu would otherwise survive the route change. Existing
+              call sites pass elements and are unaffected. */}
+          {typeof children === 'function' ? children({ close: () => setOpen(false) }) : children}
         </div>
       ) : null}
     </div>

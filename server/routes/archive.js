@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { query, transaction } from '../db.js';
 import { HttpError, requireText, wrap } from '../lib/http.js';
 import { clientIp, recordActivity } from '../lib/activity.js';
+import { notifyAdmins } from '../lib/notify.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import { archiveDir, uploadArchive } from '../middleware/upload.js';
 
@@ -257,6 +258,17 @@ router.post(
         .join(', ')}`,
       clientIp(req)
     );
+
+    await notifyAdmins(req.user.id, {
+      type: 'archive.file.uploaded',
+      entityType: 'archive_folder',
+      entityId: folder.id,
+      title: `${req.user.fullName} uploaded ${uploaded.length} file${
+        uploaded.length === 1 ? '' : 's'
+      } to the archive`,
+      body: `${folder.name} · ${uploaded.map((file) => file.originalname).join(', ')}`,
+      link: `/archive/${folder.id}`,
+    });
 
     res.status(201).json({ files: await listFiles(folder.id), uploaded: uploaded.length });
   })

@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { Icon } from './Icons.jsx';
+import NotificationBell from './NotificationBell.jsx';
 import { Avatar, RoleBadge } from './ui.jsx';
 
 const PRIMARY_NAV = [
@@ -174,6 +175,8 @@ export default function Layout() {
 
           <span className="topbar__crumb">{crumbFor(location.pathname)}</span>
           <span className="topbar__spacer" />
+
+          <NotificationBell />
 
           <button
             type="button"

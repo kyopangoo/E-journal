@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { HttpError, requireText, wrap } from '../lib/http.js';
 import { clientIp, recordActivity } from '../lib/activity.js';
+import { notifyTeam } from '../lib/notify.js';
 import { requireAuth } from '../middleware/auth.js';
 import { uploadCertification, uploadDir } from '../middleware/upload.js';
 import { schemaQuery } from '../schema.js';
@@ -93,6 +94,17 @@ router.post(
     );
 
     await recordActivity(req.user.id, 'CERTIFICATION_UPLOADED', `Uploaded certification "${name}"`, clientIp(req));
+
+    // Certifications live in the member's own schema, so the link points at the hub — the one
+    // page where everybody's certifications are visible.
+    await notifyTeam(req.user.id, {
+      type: 'certification.added',
+      entityType: 'certification',
+      entityId: result.insertId,
+      title: `${req.user.fullName} added a certification`,
+      body: issuer ? `${name} · ${issuer}` : name,
+      link: '/achievements/certification-hub',
+    });
 
     const rows = await schemaQuery(
       req.user.id,

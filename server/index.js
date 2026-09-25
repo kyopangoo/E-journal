@@ -17,6 +17,7 @@ import certificationRoutes from './routes/certifications.js';
 import dashboardRoutes from './routes/dashboard.js';
 import elearningRoutes from './routes/elearning.js';
 import forumRoutes from './routes/forum.js';
+import notificationRoutes from './routes/notifications.js';
 import profileRoutes from './routes/profile.js';
 import scheduleRoutes from './routes/schedule.js';
 import usersRoutes from './routes/users.js';
@@ -56,6 +57,7 @@ app.use('/api/certifications', certificationRoutes);
 app.use('/api/archive', archiveRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.use('/api', (req, res) => {
   res.status(404).json({ error: `No API route for ${req.method} ${req.originalUrl}` });

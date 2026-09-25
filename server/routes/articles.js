@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { HttpError, requireText, wrap } from '../lib/http.js';
 import { clientIp, recordActivity } from '../lib/activity.js';
+import { notifyTeam } from '../lib/notify.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
@@ -67,6 +68,15 @@ router.post(
 
     await recordActivity(req.user.id, 'ARTICLE_ADDED', `Shared article "${title}"`, clientIp(req));
 
+    await notifyTeam(req.user.id, {
+      type: 'article.added',
+      entityType: 'article',
+      entityId: result.insertId,
+      title: `${req.user.fullName} shared an article`,
+      body: title,
+      link: '/achievements/articles',
+    });
+
     const rows = await query(
       `SELECT ${ARTICLE_COLUMNS} FROM articles WHERE id = ? LIMIT 1`,
       [result.insertId]
@@ -88,6 +98,15 @@ router.delete(
 
     await query('DELETE FROM articles WHERE id = ? AND user_id = ?', [id, req.user.id]);
     await recordActivity(req.user.id, 'ARTICLE_DELETED', `Removed article "${rows[0].title}"`, clientIp(req));
+
+    await notifyTeam(req.user.id, {
+      type: 'article.deleted',
+      entityType: 'article',
+      entityId: id,
+      title: `${req.user.fullName} removed an article`,
+      body: rows[0].title,
+      link: '/achievements/articles',
+    });
 
     res.json({ ok: true });
   })

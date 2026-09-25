@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { HttpError, requireText, wrap } from '../lib/http.js';
 import { clientIp, recordActivity } from '../lib/activity.js';
+import { notifyTeam, notifyUsers } from '../lib/notify.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import { uploadDir, uploadElearningImage } from '../middleware/upload.js';
 
@@ -77,6 +78,16 @@ router.post(
         [assignmentId, questions[i].prompt, mediaMap[i] ?? null, i]
       );
     }
+
+    // Admin-only to create, but every member works through e-learning, so it is team news.
+    await notifyTeam(req.user.id, {
+      type: 'elearning.assignment.created',
+      entityType: 'elearning_assignment',
+      entityId: assignmentId,
+      title: `${req.user.fullName} published a new assignment`,
+      body: title,
+      link: `/e-learning/${assignmentId}`,
+    });
 
     res.status(201).json({ assignment: { id: assignmentId, title, description, image: assignmentImage } });
   })
@@ -203,8 +214,17 @@ router.post(
     const parentId = req.body?.parentId ? Number(req.body.parentId) : null;
     const body = requireText(req.body?.body, 'Reply', 5000);
 
-    const question = await query('SELECT assignment_id FROM elearning_questions WHERE id = ?', [questionId]);
+    // The assignment title comes along for the notification text, so this stays one query.
+    const question = await query(
+      `SELECT q.assignment_id AS assignmentId, a.title AS assignmentTitle
+         FROM elearning_questions q
+         JOIN elearning_assignments a ON a.id = q.assignment_id
+        WHERE q.id = ?`,
+      [questionId]
+    );
     if (!question.length) throw new HttpError(404, 'Question not found');
+
+    const { assignmentId, assignmentTitle } = question[0];
 
     const media = [];
     for (const file of req.files || []) {
@@ -227,6 +247,33 @@ router.post(
         [postId, m.url, m.type]
       );
     }
+
+    // Same targeting rule as a forum reply: the person who set the assignment, plus everyone
+    // already posting in this question. Nobody else needs to follow one thread.
+    const participants = await query(
+      `SELECT DISTINCT user_id AS userId FROM (
+         SELECT a.created_by AS user_id
+           FROM elearning_assignments a
+           JOIN elearning_questions q ON q.assignment_id = a.id
+          WHERE q.id = ?
+         UNION
+         SELECT user_id FROM elearning_posts WHERE question_id = ?
+       ) AS participants`,
+      [questionId, questionId]
+    );
+
+    await notifyUsers(
+      req.user.id,
+      participants.map((row) => row.userId),
+      {
+        type: 'elearning.post.created',
+        entityType: 'elearning_question',
+        entityId: questionId,
+        title: `${req.user.fullName} replied in "${assignmentTitle}"`,
+        body,
+        link: `/e-learning/${assignmentId}`,
+      }
+    );
 
     res.json({ ok: true });
   })

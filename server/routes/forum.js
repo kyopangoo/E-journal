@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { HttpError, requireText, wrap } from '../lib/http.js';
 import { clientIp, recordActivity } from '../lib/activity.js';
+import { notifyTeam, notifyUsers } from '../lib/notify.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = Router();
@@ -91,6 +92,16 @@ router.post(
 
     await recordActivity(req.user.id, 'THREAD_CREATED', `Started discussion "${title}"`, clientIp(req));
 
+    // A new discussion is team-wide news; the replies inside it are not (see below).
+    await notifyTeam(req.user.id, {
+      type: 'forum.thread.created',
+      entityType: 'forum_thread',
+      entityId: result.insertId,
+      title: `${req.user.fullName} started a discussion`,
+      body: title,
+      link: `/forum/${result.insertId}`,
+    });
+
     res.status(201).json({ thread: mapThread(await findThread(result.insertId)) });
   })
 );
@@ -149,6 +160,30 @@ router.post(
       clientIp(req)
     );
 
+    // Targeted, not broadcast: only the people already in this conversation care that it
+    // moved on. The actor is filtered out inside notifyUsers().
+    const participants = await query(
+      `SELECT DISTINCT user_id AS userId FROM (
+         SELECT user_id FROM forum_threads WHERE id = ?
+         UNION
+         SELECT user_id FROM forum_replies WHERE thread_id = ?
+       ) AS participants`,
+      [id, id]
+    );
+
+    await notifyUsers(
+      req.user.id,
+      participants.map((row) => row.userId),
+      {
+        type: 'forum.reply.created',
+        entityType: 'forum_reply',
+        entityId: result.insertId,
+        title: `${req.user.fullName} replied to "${thread.title}"`,
+        body,
+        link: `/forum/${id}`,
+      }
+    );
+
     const rows = await query(
       `SELECT r.id, r.parent_reply_id AS parentReplyId, r.body, r.created_at AS createdAt,
               u.id AS authorId, u.full_name AS authorName, u.username AS authorUsername, u.role AS authorRole
@@ -181,6 +216,16 @@ router.delete(
       `Deleted discussion "${rows[0].title}"`,
       clientIp(req)
     );
+
+    // Links to the forum rather than /forum/:id — the discussion it pointed at is gone.
+    await notifyTeam(req.user.id, {
+      type: 'forum.thread.deleted',
+      entityType: 'forum_thread',
+      entityId: id,
+      title: `${req.user.fullName} deleted a discussion`,
+      body: rows[0].title,
+      link: '/forum',
+    });
 
     res.json({ ok: true });
   })

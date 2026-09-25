@@ -130,3 +130,27 @@ CREATE TABLE IF NOT EXISTS archive_files (
   CONSTRAINT fk_archive_files_folder FOREIGN KEY (folder_id) REFERENCES archive_folders (id) ON DELETE CASCADE,
   CONSTRAINT fk_archive_files_uploader FOREIGN KEY (uploaded_by) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- One row means one notification for one recipient, so a broadcast is written as N rows —
+-- that is what lets each member keep their own read state. It lives here in the central db
+-- rather than in a member's own schema because the recipient is almost never the actor:
+-- schedule_events and activity_history are per-user, so neither can carry a message to
+-- somebody else.
+CREATE TABLE IF NOT EXISTS notifications (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id     INT UNSIGNED    NOT NULL,
+  actor_id    INT UNSIGNED    NULL,
+  type        VARCHAR(48)     NOT NULL,
+  entity_type VARCHAR(32)     NULL,
+  entity_id   BIGINT UNSIGNED NULL,
+  title       VARCHAR(200)    NOT NULL,
+  body        VARCHAR(300)    NULL,
+  link        VARCHAR(255)    NOT NULL,
+  read_at     DATETIME        NULL,
+  created_at  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_notif_recipient (user_id, created_at),
+  KEY idx_notif_unread (user_id, read_at),
+  CONSTRAINT fk_notif_recipient FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT fk_notif_actor FOREIGN KEY (actor_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
